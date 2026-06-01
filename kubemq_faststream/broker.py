@@ -8,7 +8,7 @@ import re
 import socket
 from collections.abc import Iterable, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import anyio
 from fast_depends import Provider, dependency_provider
@@ -18,7 +18,6 @@ from faststream._internal.context.repository import ContextRepo
 from faststream._internal.di import FastDependsConfig
 from faststream._internal.logger.state import LoggerState
 from faststream.specification.schema import BrokerSpec
-from typing_extensions import Self
 
 from kubemq_faststream.config import KubeMQBrokerConfig, KubeMQConnection
 from kubemq_faststream.message import KubeMQRawMessage
@@ -328,6 +327,11 @@ class KubeMQBroker(
         cache_key: str | None = None,
         cache_ttl: int | None = None,
         reply_to: str | None = None,
+        delay_in_seconds: int = 0,
+        expiration_in_seconds: int = 0,
+        max_receive_count: int = 0,
+        max_receive_queue: str = "",
+        message_id: str | None = None,
     ) -> Any:
         """Publish a message to a KubeMQ channel."""
         channel, pattern = _resolve_pattern(
@@ -348,6 +352,11 @@ class KubeMQBroker(
             timeout=timeout,
             cache_key=cache_key,
             cache_ttl=cache_ttl,
+            delay_in_seconds=delay_in_seconds,
+            expiration_in_seconds=expiration_in_seconds,
+            max_receive_count=max_receive_count,
+            max_receive_queue=max_receive_queue,
+            message_id=message_id,
         )
         if self.config.producer is None:
             raise RuntimeError("Broker not connected. Call connect() or start() first.")
@@ -406,3 +415,103 @@ class KubeMQBroker(
         if self.config.producer is None:
             raise RuntimeError("Broker not connected. Call connect() or start() first.")
         return await self.config.producer.publish_batch(cmd)
+
+    async def peek_queue_messages(
+        self,
+        queues: str,
+        max_messages: int = 1,
+    ) -> Any:
+        """Peek at queue messages without consuming them."""
+        if self._connection is None:
+            raise RuntimeError("Broker not connected. Call connect() or start() first.")
+        return await self._connection.queues.peek_queue_messages(
+            channel=queues,
+            max_messages=max_messages,
+        )
+
+    async def ack_all_queue_messages(
+        self,
+        queues: str,
+    ) -> Any:
+        """Acknowledge all pending messages in a queue."""
+        if self._connection is None:
+            raise RuntimeError("Broker not connected. Call connect() or start() first.")
+        return await self._connection.queues.ack_all_queue_messages(
+            channel=queues,
+        )
+
+    async def publish_events_batch(
+        self,
+        *messages: SendableMessage,
+        events: str,
+        headers: dict[str, str] | None = None,
+        metadata: str = "",
+    ) -> Any:
+        """Publish a batch of events to a channel."""
+        from kubemq.pubsub.event_message import EventMessage
+
+        if self._connection is None:
+            raise RuntimeError("Broker not connected. Call connect() or start() first.")
+        from faststream.message import encode_message
+
+        event_msgs = []
+        for m in messages:
+            body, _ = encode_message(m, None)
+            event_msgs.append(
+                EventMessage(
+                    channel=events,
+                    body=body,
+                    tags=headers or {},
+                    metadata=metadata,
+                )
+            )
+        return await self._connection.pubsub.send_events_batch(event_msgs)
+
+    async def request_batch(
+        self,
+        *messages: SendableMessage,
+        commands: str | None = None,
+        queries: str | None = None,
+        timeout: int | None = None,
+        headers: dict[str, str] | None = None,
+        metadata: str = "",
+    ) -> Any:
+        """Send a batch of command or query requests."""
+        if commands is None and queries is None:
+            raise FeatureNotSupportedException("request_batch() requires commands= or queries=")
+        if self._connection is None:
+            raise RuntimeError("Broker not connected. Call connect() or start() first.")
+        from faststream.message import encode_message
+
+        if commands is not None:
+            from kubemq.cq.command_message import CommandMessage
+
+            cmd_msgs = []
+            for m in messages:
+                body, _ = encode_message(m, None)
+                cmd_msgs.append(
+                    CommandMessage(
+                        channel=commands,
+                        body=body,
+                        tags=headers or {},
+                        metadata=metadata,
+                        timeout_in_seconds=timeout or self.config.broker_config.default_cq_timeout,
+                    )
+                )
+            return await self._connection.cq.send_commands_batch(cmd_msgs)
+        else:
+            from kubemq.cq.query_message import QueryMessage
+
+            query_msgs = []
+            for m in messages:
+                body, _ = encode_message(m, None)
+                query_msgs.append(
+                    QueryMessage(
+                        channel=queries,
+                        body=body,
+                        tags=headers or {},
+                        metadata=metadata,
+                        timeout_in_seconds=timeout or self.config.broker_config.default_cq_timeout,
+                    )
+                )
+            return await self._connection.cq.send_queries_batch(query_msgs)

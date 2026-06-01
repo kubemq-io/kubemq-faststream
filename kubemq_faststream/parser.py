@@ -75,6 +75,18 @@ class KubeMQParser:
         ts = msg.timestamp if msg.timestamp is not None else datetime.now(tz=UTC)
         if isinstance(ts, datetime) and ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)
+
+        def _normalize_optional_dt(val: datetime | None) -> datetime | None:
+            if not isinstance(val, datetime):
+                return None
+            ts_value = val.timestamp() if val.tzinfo else val.replace(tzinfo=UTC).timestamp()
+            if ts_value == 0.0:
+                return None
+            return val if val.tzinfo else val.replace(tzinfo=UTC)
+
+        delayed = _normalize_optional_dt(msg.delayed_to)
+        expired = _normalize_optional_dt(msg.expired_at)
+
         return KubeMQRawMessage(
             body=msg.body or b"",
             channel=msg.channel,
@@ -87,6 +99,11 @@ class KubeMQParser:
             metadata=msg.metadata or "",
             timestamp=ts,
             sequence=getattr(msg, "sequence", 0),
+            receive_count=msg.receive_count,
+            from_client_id=msg.from_client_id or "",
+            delayed_to=delayed,
+            expired_at=expired,
+            re_route_from_queue=msg.re_route_from_queue or "",
             queue_msg=msg,
         )
 

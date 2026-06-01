@@ -533,3 +533,275 @@ async def test_start_injects_connection_into_subscribers():
 
     mock_sub1.set_connection.assert_called_once()
     mock_sub2.set_connection.assert_called_once()
+
+
+# ---- Batch operations tests: publish_events_batch, request_batch ----
+
+
+async def test_publish_events_batch_success():
+    """publish_events_batch() sends a list of EventMessage via pubsub.send_events_batch."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        await broker._connect()
+
+    broker._connection.pubsub.send_events_batch = AsyncMock(return_value="batch-ok")
+
+    await broker.publish_events_batch("msg1", "msg2", "msg3", events="batch-ch")
+
+    broker._connection.pubsub.send_events_batch.assert_awaited_once()
+    event_msgs = broker._connection.pubsub.send_events_batch.call_args[0][0]
+    assert len(event_msgs) == 3
+
+    from kubemq.pubsub.event_message import EventMessage
+
+    for em in event_msgs:
+        assert isinstance(em, EventMessage)
+        assert em.channel == "batch-ch"
+
+
+async def test_publish_events_batch_not_connected_raises():
+    """publish_events_batch() raises RuntimeError when broker not connected."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+    with pytest.raises(RuntimeError, match="Broker not connected"):
+        await broker.publish_events_batch("msg1", events="batch-ch")
+
+
+async def test_publish_events_batch_with_headers_and_metadata():
+    """publish_events_batch() forwards headers (as tags) and metadata to EventMessage."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        await broker._connect()
+
+    broker._connection.pubsub.send_events_batch = AsyncMock(return_value="ok")
+
+    await broker.publish_events_batch(
+        "msg1", "msg2",
+        events="batch-ch",
+        headers={"k": "v"},
+        metadata="meta1",
+    )
+
+    event_msgs = broker._connection.pubsub.send_events_batch.call_args[0][0]
+    assert len(event_msgs) == 2
+    for em in event_msgs:
+        assert em.tags == {"k": "v"}
+        assert em.metadata == "meta1"
+
+
+async def test_request_batch_commands_success():
+    """request_batch() with commands= sends CommandMessage list via cq.send_commands_batch."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        await broker._connect()
+
+    broker._connection.cq.send_commands_batch = AsyncMock(return_value=["r1", "r2"])
+
+    result = await broker.request_batch("cmd1", "cmd2", commands="cmd-ch", timeout=15)
+
+    assert result == ["r1", "r2"]
+    broker._connection.cq.send_commands_batch.assert_awaited_once()
+    cmd_msgs = broker._connection.cq.send_commands_batch.call_args[0][0]
+    assert len(cmd_msgs) == 2
+
+    from kubemq.cq.command_message import CommandMessage
+
+    for cm in cmd_msgs:
+        assert isinstance(cm, CommandMessage)
+        assert cm.channel == "cmd-ch"
+        assert cm.timeout_in_seconds == 15
+
+
+async def test_request_batch_queries_success():
+    """request_batch() with queries= sends QueryMessage list via cq.send_queries_batch."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        await broker._connect()
+
+    broker._connection.cq.send_queries_batch = AsyncMock(return_value=["q1", "q2"])
+
+    result = await broker.request_batch("qry1", "qry2", queries="qry-ch", timeout=20)
+
+    assert result == ["q1", "q2"]
+    broker._connection.cq.send_queries_batch.assert_awaited_once()
+    query_msgs = broker._connection.cq.send_queries_batch.call_args[0][0]
+    assert len(query_msgs) == 2
+
+    from kubemq.cq.query_message import QueryMessage
+
+    for qm in query_msgs:
+        assert isinstance(qm, QueryMessage)
+        assert qm.channel == "qry-ch"
+        assert qm.timeout_in_seconds == 20
+
+
+async def test_request_batch_not_connected_raises():
+    """request_batch() raises RuntimeError when broker not connected."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+    with pytest.raises(RuntimeError, match="Broker not connected"):
+        await broker.request_batch("msg", commands="cmd-ch")
+
+
+async def test_request_batch_neither_commands_nor_queries_raises():
+    """request_batch() without commands= or queries= raises FeatureNotSupportedException."""
+    from kubemq_faststream.schemas import FeatureNotSupportedException
+
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        await broker._connect()
+
+    with pytest.raises(FeatureNotSupportedException, match="request_batch"):
+        await broker.request_batch("msg")
+
+
+# ---- Error handling and lifecycle path tests ----
+
+
+async def test_stop_closes_and_nullifies_connection():
+    """stop() closes the connection and sets _connection to None."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        await broker._connect()
+
+    assert broker._connection is not None
+
+    with patch.object(type(broker).__mro__[2], "stop", new_callable=AsyncMock):
+        await broker.stop()
+
+    assert broker._connection is None
+
+
+async def test_stop_ignores_close_exception():
+    """stop() completes without raising when connection.close() raises."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        await broker._connect()
+
+    assert broker._connection is not None
+    broker._connection.close = AsyncMock(side_effect=RuntimeError("close failed"))
+
+    with patch.object(type(broker).__mro__[2], "stop", new_callable=AsyncMock):
+        await broker.stop()
+
+    assert broker._connection is None
+
+
+async def test_connect_cleanup_ignores_individual_close_errors():
+    """During partial connect failure, cleanup close errors are suppressed."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_queues = _make_mock_client()
+    mock_queues.close = AsyncMock(side_effect=RuntimeError("close error"))
+    mock_cq = _make_mock_client(fail_connect=True)
+
+    p1, p2, p3 = _patch_sdk_clients(mock_pubsub, mock_queues, mock_cq)
+    with p1, p2, p3:
+        with pytest.raises(RuntimeError, match="connect failed"):
+            await broker._connect()
+
+    # pubsub.close was still called even though queues.close raised
+    mock_pubsub.close.assert_awaited_once()
+    # queues.close was called (and raised, but error was suppressed)
+    mock_queues.close.assert_awaited_once()
+
+
+async def test_ping_retries_then_succeeds():
+    """ping() retries after failure and returns True on success."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+
+    mock_pubsub = _make_mock_client()
+    mock_pubsub.ping = AsyncMock(
+        side_effect=[RuntimeError("fail"), {"host": "ok"}]
+    )
+    mock_queues = _make_mock_client()
+    mock_cq = _make_mock_client()
+
+    conn = KubeMQConnection(pubsub=mock_pubsub, queues=mock_queues, cq=mock_cq)
+    broker._connection = conn
+
+    result = await broker.ping(timeout=5.0)
+    assert result is True
+
+
+async def test_peek_queue_messages_not_connected_raises():
+    """peek_queue_messages() raises RuntimeError when broker not connected."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+    assert broker._connection is None
+
+    with pytest.raises(RuntimeError, match="Broker not connected"):
+        await broker.peek_queue_messages("q")
+
+
+async def test_ack_all_queue_messages_not_connected_raises():
+    """ack_all_queue_messages() raises RuntimeError when broker not connected."""
+    broker = KubeMQBroker("kubemq://localhost:50000")
+    assert broker._connection is None
+
+    with pytest.raises(RuntimeError, match="Broker not connected"):
+        await broker.ack_all_queue_messages("q")
+
+
+# ---- Broker constructor parameter branch tests ----
+
+
+def test_broker_init_protocol_default_tls_enabled():
+    """Broker with tls_enabled=True and no explicit protocol defaults to 'kubemq+tls'."""
+    broker = KubeMQBroker("kubemq://localhost:50000", tls_enabled=True, protocol=None)
+    assert broker.specification.protocol == "kubemq+tls"
+
+
+def test_broker_init_protocol_default_no_tls():
+    """Broker with tls_enabled=False and no explicit protocol defaults to 'kubemq'."""
+    broker = KubeMQBroker("kubemq://localhost:50000", tls_enabled=False, protocol=None)
+    assert broker.specification.protocol == "kubemq"
+
+
+def test_broker_init_specification_url_as_list():
+    """Broker accepts specification_url as a list (non-str iterable branch)."""
+    broker = KubeMQBroker(
+        "kubemq://localhost:50000",
+        specification_url=["url1", "url2"],
+    )
+    assert broker.specification.url == ["url1", "url2"]

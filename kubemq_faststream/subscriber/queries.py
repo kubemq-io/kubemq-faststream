@@ -7,6 +7,7 @@ from typing import Any
 
 import anyio
 from faststream.message import encode_message
+from faststream.response import Response as FSResponse
 
 from kubemq_faststream.subscriber.usecase import KubeMQSubscriber
 
@@ -50,8 +51,12 @@ class QueriesSubscriber(KubeMQSubscriber):
 
                         # Send success response with body (unless no_reply)
                         if not self._no_reply:
+                            # Unwrap faststream Response to get the raw handler return value
+                            raw_result = result.body if isinstance(result, FSResponse) else result
                             body, _ = (
-                                encode_message(result, None) if result is not None else (b"", None)
+                                encode_message(raw_result, None)
+                                if raw_result is not None
+                                else (b"", None)
                             )
                             response = QueryResponse(
                                 query_received=query_received,

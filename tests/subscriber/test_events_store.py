@@ -164,3 +164,159 @@ def test_map_start_position():
     from kubemq.pubsub.events_store_subscription import EventStoreStartPosition
     result = sub._map_start_position()
     assert result == EventStoreStartPosition.StartFromNew
+
+
+async def test_events_store_consume_start_at_sequence_with_value():
+    """_consume() passes events_store_sequence_value for START_AT_SEQUENCE."""
+    from unittest.mock import patch, call
+
+    sub = _make_es_subscriber(
+        start_position=StartPosition.START_AT_SEQUENCE,
+        start_value=42,
+    )
+    mock_event = _make_mock_event_store()
+
+    async def mock_subscribe(subscription):
+        yield mock_event
+
+    mock_conn = MagicMock()
+    mock_conn.pubsub.subscribe_to_events_store = mock_subscribe
+    sub._connection = mock_conn
+    sub.running = True
+    sub.consume = AsyncMock()
+
+    with patch(
+        "kubemq.pubsub.events_store_subscription.EventsStoreSubscription"
+    ) as MockSub:
+        sentinel = MagicMock()
+        MockSub.return_value = sentinel
+
+        await sub._consume()
+
+        MockSub.assert_called_once()
+        kwargs = MockSub.call_args[1]
+        assert kwargs["events_store_sequence_value"] == 42
+
+
+async def test_events_store_consume_start_at_time_with_value():
+    """_consume() passes events_store_start_time for START_AT_TIME."""
+    from unittest.mock import patch
+
+    sub = _make_es_subscriber(
+        start_position=StartPosition.START_AT_TIME,
+        start_value=1700000000.0,
+    )
+    mock_event = _make_mock_event_store()
+
+    mock_conn = MagicMock()
+
+    async def mock_subscribe(subscription):
+        yield mock_event
+
+    mock_conn.pubsub.subscribe_to_events_store = mock_subscribe
+    sub._connection = mock_conn
+    sub.running = True
+    sub.consume = AsyncMock()
+
+    with patch(
+        "kubemq.pubsub.events_store_subscription.EventsStoreSubscription"
+    ) as MockSub:
+        MockSub.return_value = MagicMock()
+
+        await sub._consume()
+
+        MockSub.assert_called_once()
+        kwargs = MockSub.call_args[1]
+        assert "events_store_start_time" in kwargs
+        start_time = kwargs["events_store_start_time"]
+        assert isinstance(start_time, datetime)
+        # 1700000000.0 -> 2023-11-14T22:13:20 UTC
+        assert start_time == datetime.fromtimestamp(1700000000.0, tz=timezone.utc)
+
+
+async def test_events_store_consume_start_at_time_delta_with_value():
+    """_consume() passes events_store_time_delta_seconds for START_AT_TIME_DELTA."""
+    from unittest.mock import patch
+
+    sub = _make_es_subscriber(
+        start_position=StartPosition.START_AT_TIME_DELTA,
+        start_value=3600,
+    )
+    mock_event = _make_mock_event_store()
+
+    mock_conn = MagicMock()
+
+    async def mock_subscribe(subscription):
+        yield mock_event
+
+    mock_conn.pubsub.subscribe_to_events_store = mock_subscribe
+    sub._connection = mock_conn
+    sub.running = True
+    sub.consume = AsyncMock()
+
+    with patch(
+        "kubemq.pubsub.events_store_subscription.EventsStoreSubscription"
+    ) as MockSub:
+        MockSub.return_value = MagicMock()
+
+        await sub._consume()
+
+        MockSub.assert_called_once()
+        kwargs = MockSub.call_args[1]
+        assert kwargs["events_store_time_delta_seconds"] == 3600
+
+
+# ---- Lifecycle edge tests ----
+
+
+async def test_events_store_consume_stops_when_not_running():
+    """_consume() breaks out of the loop when running is set to False."""
+    sub = _make_es_subscriber()
+    mock_event1 = _make_mock_event_store()
+    mock_event1.id = "es-id-1"
+    mock_event2 = _make_mock_event_store()
+    mock_event2.id = "es-id-2"
+
+    async def mock_subscribe(subscription):
+        yield mock_event1
+        yield mock_event2
+
+    mock_conn = MagicMock()
+    mock_conn.pubsub.subscribe_to_events_store = mock_subscribe
+    sub._connection = mock_conn
+    sub.running = True
+
+    call_count = 0
+
+    async def consume_side_effect(msg):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 1:
+            sub.running = False
+
+    sub.consume = AsyncMock(side_effect=consume_side_effect)
+
+    await sub._consume()
+
+    # Only the first event should have been consumed before running was set False
+    assert call_count == 1
+
+
+async def test_events_store_consume_propagates_cancellation():
+    """_consume() re-raises CancelledError (anyio cancellation)."""
+    import asyncio
+
+    sub = _make_es_subscriber()
+    mock_event = _make_mock_event_store()
+
+    async def mock_subscribe(subscription):
+        yield mock_event
+
+    mock_conn = MagicMock()
+    mock_conn.pubsub.subscribe_to_events_store = mock_subscribe
+    sub._connection = mock_conn
+    sub.running = True
+    sub.consume = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await sub._consume()

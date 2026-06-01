@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from faststream.middlewares import AckPolicy
+from faststream.response import Response as FSResponse
 
 from kubemq_faststream.schemas import KubeMQPattern
 from kubemq_faststream.subscriber.queries import QueriesSubscriber
@@ -327,3 +328,80 @@ async def test_queries_stops_when_not_running():
     await sub._consume()
 
     sub.consume.assert_not_awaited()
+
+
+# ---- FSResponse unwrapping tests ----
+
+
+async def test_queries_response_unwraps_faststream_response_dict():
+    """Response wrapping from FastStream is unwrapped before encoding."""
+    sub = _make_queries_subscriber()
+    mock_query = _make_mock_query_received()
+
+    mock_cq = MagicMock()
+    mock_cq.config.client_id = "test-client"
+    mock_cq.subscribe_to_queries = _make_subscribe_fn(sub, mock_query)
+    mock_cq.send_response = AsyncMock()
+
+    mock_conn = MagicMock()
+    mock_conn.cq = mock_cq
+    sub._connection = mock_conn
+    sub.running = True
+    sub.consume = AsyncMock(return_value=FSResponse(body={"result": "ok"}))
+
+    await sub._consume()
+
+    sub.consume.assert_awaited_once()
+    mock_cq.send_response.assert_awaited_once()
+
+    response = mock_cq.send_response.call_args[0][0]
+    assert response.is_executed is True
+    assert response.request_id == "qry-1"
+    assert isinstance(response.body, bytes)
+    assert response.body == b'{"result": "ok"}'
+
+
+async def test_queries_response_unwraps_faststream_response_string():
+    """String body in FSResponse is unwrapped and encoded correctly."""
+    sub = _make_queries_subscriber()
+    mock_query = _make_mock_query_received()
+
+    mock_cq = MagicMock()
+    mock_cq.config.client_id = "test-client"
+    mock_cq.subscribe_to_queries = _make_subscribe_fn(sub, mock_query)
+    mock_cq.send_response = AsyncMock()
+
+    mock_conn = MagicMock()
+    mock_conn.cq = mock_cq
+    sub._connection = mock_conn
+    sub.running = True
+    sub.consume = AsyncMock(return_value=FSResponse(body="hello"))
+
+    await sub._consume()
+
+    response = mock_cq.send_response.call_args[0][0]
+    assert response.is_executed is True
+    assert isinstance(response.body, bytes)
+
+
+async def test_queries_response_unwraps_faststream_response_none():
+    """None body in FSResponse produces empty bytes in response."""
+    sub = _make_queries_subscriber()
+    mock_query = _make_mock_query_received()
+
+    mock_cq = MagicMock()
+    mock_cq.config.client_id = "test-client"
+    mock_cq.subscribe_to_queries = _make_subscribe_fn(sub, mock_query)
+    mock_cq.send_response = AsyncMock()
+
+    mock_conn = MagicMock()
+    mock_conn.cq = mock_cq
+    sub._connection = mock_conn
+    sub.running = True
+    sub.consume = AsyncMock(return_value=FSResponse(body=None))
+
+    await sub._consume()
+
+    response = mock_cq.send_response.call_args[0][0]
+    assert response.is_executed is True
+    assert response.body == b""

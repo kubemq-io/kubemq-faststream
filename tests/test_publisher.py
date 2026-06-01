@@ -119,3 +119,33 @@ async def test_publisher_publish_custom_channel():
     call_args = pub._basic_publish.call_args
     cmd = call_args[0][0]
     assert cmd.destination == "override-ch"
+
+
+async def test_publisher_request_creates_kubemq_command():
+    """publisher.request() creates a KubeMQPublishCommand with the right pattern."""
+    pub = _make_publisher(channel="req-ch", pattern=KubeMQPattern.COMMANDS)
+    pub._basic_request = AsyncMock(return_value="response")
+
+    result = await pub.request(b"do-it")
+
+    assert result == "response"
+    pub._basic_request.assert_awaited_once()
+    call_args = pub._basic_request.call_args
+    cmd = call_args[0][0]
+    assert isinstance(cmd, KubeMQPublishCommand)
+    assert cmd.destination == "req-ch"
+    assert cmd.pattern == KubeMQPattern.COMMANDS
+
+
+async def test_publisher_request_custom_channel():
+    """publisher.request() can override the channel."""
+    pub = _make_publisher(channel="default-ch", pattern=KubeMQPattern.QUERIES)
+    pub._basic_request = AsyncMock(return_value="resp")
+
+    await pub.request(b"msg", channel="override-ch")
+
+    call_args = pub._basic_request.call_args
+    cmd = call_args[0][0]
+    assert isinstance(cmd, KubeMQPublishCommand)
+    assert cmd.destination == "override-ch"
+    assert cmd.pattern == KubeMQPattern.QUERIES

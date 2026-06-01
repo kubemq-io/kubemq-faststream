@@ -53,54 +53,63 @@ class KubeMQProducer:
 
         match cmd.pattern:
             case KubeMQPattern.EVENTS:
-                return await conn.pubsub.publish_event(
-                    EventMessage(
-                        channel=cmd.destination,
-                        body=body,
-                        tags=cmd.headers or {},
-                        metadata=cmd.metadata,
-                    )
-                )
+                em_kwargs: dict[str, Any] = {
+                    "channel": cmd.destination,
+                    "body": body,
+                    "tags": cmd.headers or {},
+                    "metadata": cmd.metadata,
+                }
+                if cmd.message_id is not None:
+                    em_kwargs["id"] = cmd.message_id
+                return await conn.pubsub.publish_event(EventMessage(**em_kwargs))
             case KubeMQPattern.EVENTS_STORE:
-                return await conn.pubsub.send_event_store(
-                    EventStoreMessage(
-                        channel=cmd.destination,
-                        body=body,
-                        tags=cmd.headers or {},
-                        metadata=cmd.metadata,
-                    )
-                )
+                esm_kwargs: dict[str, Any] = {
+                    "channel": cmd.destination,
+                    "body": body,
+                    "tags": cmd.headers or {},
+                    "metadata": cmd.metadata,
+                }
+                if cmd.message_id is not None:
+                    esm_kwargs["id"] = cmd.message_id
+                return await conn.pubsub.send_event_store(EventStoreMessage(**esm_kwargs))
             case KubeMQPattern.QUEUES:
-                return await conn.queues.send_queue_message(
-                    QueueMessage(
-                        channel=cmd.destination,
-                        body=body,
-                        tags=cmd.headers or {},
-                        metadata=cmd.metadata,
-                    )
-                )
+                qm_kwargs: dict[str, Any] = {
+                    "channel": cmd.destination,
+                    "body": body,
+                    "tags": cmd.headers or {},
+                    "metadata": cmd.metadata,
+                    "delay_in_seconds": cmd.delay_in_seconds,
+                    "expiration_in_seconds": cmd.expiration_in_seconds,
+                    "max_receive_count": cmd.max_receive_count,
+                    "max_receive_queue": cmd.max_receive_queue,
+                }
+                if cmd.message_id is not None:
+                    qm_kwargs["id"] = cmd.message_id
+                return await conn.queues.send_queue_message(QueueMessage(**qm_kwargs))
             case KubeMQPattern.COMMANDS:
-                return await conn.cq.send_command(
-                    CommandMessage(
-                        channel=cmd.destination,
-                        body=body,
-                        tags=cmd.headers or {},
-                        metadata=cmd.metadata,
-                        timeout_in_seconds=cmd.timeout or 30,
-                    )
-                )
+                cm_kwargs: dict[str, Any] = {
+                    "channel": cmd.destination,
+                    "body": body,
+                    "tags": cmd.headers or {},
+                    "metadata": cmd.metadata,
+                    "timeout_in_seconds": cmd.timeout or 30,
+                }
+                if cmd.message_id is not None:
+                    cm_kwargs["id"] = cmd.message_id
+                return await conn.cq.send_command(CommandMessage(**cm_kwargs))
             case KubeMQPattern.QUERIES:
-                return await conn.cq.send_query(
-                    QueryMessage(
-                        channel=cmd.destination,
-                        body=body,
-                        tags=cmd.headers or {},
-                        metadata=cmd.metadata,
-                        timeout_in_seconds=cmd.timeout or 30,
-                        cache_key=cmd.cache_key or "",
-                        cache_ttl_in_seconds=cmd.cache_ttl or 0,
-                    )
-                )
+                query_kwargs: dict[str, Any] = {
+                    "channel": cmd.destination,
+                    "body": body,
+                    "tags": cmd.headers or {},
+                    "metadata": cmd.metadata,
+                    "timeout_in_seconds": cmd.timeout or 30,
+                    "cache_key": cmd.cache_key or "",
+                    "cache_ttl_in_seconds": cmd.cache_ttl or 0,
+                }
+                if cmd.message_id is not None:
+                    query_kwargs["id"] = cmd.message_id
+                return await conn.cq.send_query(QueryMessage(**query_kwargs))
 
     async def request(self, cmd: KubeMQPublishCommand) -> Any:
         """Send a request (commands/queries only)."""
@@ -124,6 +133,11 @@ class KubeMQProducer:
                 channel=cmd.destination,
                 body=body,
                 tags=cmd.headers or {},
+                metadata=cmd.metadata,
+                delay_in_seconds=cmd.delay_in_seconds,
+                expiration_in_seconds=cmd.expiration_in_seconds,
+                max_receive_count=cmd.max_receive_count,
+                max_receive_queue=cmd.max_receive_queue,
             )
             for body in cmd.batch_bodies
         ]

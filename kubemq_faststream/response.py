@@ -22,6 +22,11 @@ class KubeMQPublishCommand(PublishCommand):
     cache_key: str | None
     cache_ttl: int | None
     _batch_bodies: tuple[bytes, ...] | None
+    delay_in_seconds: int
+    expiration_in_seconds: int
+    max_receive_count: int
+    max_receive_queue: str
+    message_id: str | None
 
     def __init__(
         self,
@@ -38,6 +43,11 @@ class KubeMQPublishCommand(PublishCommand):
         headers: dict[str, Any] | None = None,
         reply_to: str = "",
         _publish_type: PublishType = PublishType.PUBLISH,
+        delay_in_seconds: int = 0,
+        expiration_in_seconds: int = 0,
+        max_receive_count: int = 0,
+        max_receive_queue: str = "",
+        message_id: str | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -53,6 +63,11 @@ class KubeMQPublishCommand(PublishCommand):
         self.cache_key = cache_key
         self.cache_ttl = cache_ttl
         self._batch_bodies = batch_bodies
+        self.delay_in_seconds = delay_in_seconds
+        self.expiration_in_seconds = expiration_in_seconds
+        self.max_receive_count = max_receive_count
+        self.max_receive_queue = max_receive_queue
+        self.message_id = message_id
 
     @property  # type: ignore[override]
     def batch_bodies(self) -> tuple[bytes, ...]:

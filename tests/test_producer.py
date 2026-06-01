@@ -207,3 +207,115 @@ async def test_encode_message_applied():
     call_args = conn.pubsub.publish_event.call_args
     event_msg = call_args[0][0]  # first positional arg
     assert isinstance(event_msg.body, bytes)
+
+
+async def test_publish_events_with_message_id():
+    """Publishing EVENTS with message_id sets id on EventMessage."""
+    conn = _make_mock_connection()
+    producer = KubeMQProducer(connection=conn)
+
+    cmd = KubeMQPublishCommand(
+        b"hello",
+        destination="events-ch",
+        pattern=KubeMQPattern.EVENTS,
+        message_id="evt-id-1",
+    )
+    await producer.publish(cmd)
+    event_msg = conn.pubsub.publish_event.call_args[0][0]
+    assert event_msg.id == "evt-id-1"
+
+
+async def test_publish_events_store_with_message_id():
+    """Publishing EVENTS_STORE with message_id sets id on EventStoreMessage."""
+    conn = _make_mock_connection()
+    producer = KubeMQProducer(connection=conn)
+
+    cmd = KubeMQPublishCommand(
+        b"hello",
+        destination="es-ch",
+        pattern=KubeMQPattern.EVENTS_STORE,
+        message_id="es-id-1",
+    )
+    await producer.publish(cmd)
+    event_store_msg = conn.pubsub.send_event_store.call_args[0][0]
+    assert event_store_msg.id == "es-id-1"
+
+
+async def test_publish_queues_with_message_id():
+    """Publishing QUEUES with message_id sets id on QueueMessage."""
+    conn = _make_mock_connection()
+    producer = KubeMQProducer(connection=conn)
+
+    cmd = KubeMQPublishCommand(
+        b"hello",
+        destination="q-ch",
+        pattern=KubeMQPattern.QUEUES,
+        message_id="q-id-1",
+    )
+    await producer.publish(cmd)
+    queue_msg = conn.queues.send_queue_message.call_args[0][0]
+    assert queue_msg.id == "q-id-1"
+
+
+async def test_publish_commands_with_message_id():
+    """Publishing COMMANDS with message_id sets id on CommandMessage."""
+    conn = _make_mock_connection()
+    producer = KubeMQProducer(connection=conn)
+
+    cmd = KubeMQPublishCommand(
+        b"hello",
+        destination="cmd-ch",
+        pattern=KubeMQPattern.COMMANDS,
+        timeout=10,
+        message_id="cmd-id-1",
+    )
+    await producer.publish(cmd)
+    command_msg = conn.cq.send_command.call_args[0][0]
+    assert command_msg.id == "cmd-id-1"
+
+
+async def test_publish_queries_with_message_id():
+    """Publishing QUERIES with message_id sets id on QueryMessage."""
+    conn = _make_mock_connection()
+    producer = KubeMQProducer(connection=conn)
+
+    cmd = KubeMQPublishCommand(
+        b"hello",
+        destination="qry-ch",
+        pattern=KubeMQPattern.QUERIES,
+        timeout=10,
+        cache_key="ck",
+        cache_ttl=60,
+        message_id="qry-id-1",
+    )
+    await producer.publish(cmd)
+    query_msg = conn.cq.send_query.call_args[0][0]
+    assert query_msg.id == "qry-id-1"
+
+
+async def test_publish_batch_not_connected_raises():
+    """publish_batch() without connection raises RuntimeError."""
+    producer = KubeMQProducer(connection=None)
+    cmd = KubeMQPublishCommand(
+        b"",
+        destination="batch-ch",
+        pattern=KubeMQPattern.QUEUES,
+        batch_bodies=(b"a",),
+    )
+    with pytest.raises(RuntimeError, match="Producer not connected"):
+        await producer.publish_batch(cmd)
+
+
+# ---- Producer identity stubs ----
+
+
+async def test_producer_parse_identity():
+    """_parse_identity returns the message as-is."""
+    result = await KubeMQProducer._parse_identity("test")
+    assert result == "test"
+
+
+async def test_producer_decode_identity():
+    """_decode_identity returns the message as-is."""
+    result = await KubeMQProducer._decode_identity({"key": "val"})
+    assert result == {"key": "val"}

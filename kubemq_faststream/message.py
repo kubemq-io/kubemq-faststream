@@ -30,6 +30,11 @@ class KubeMQRawMessage:
     timestamp: datetime
     sequence: int = 0
     cache_hit: bool = False
+    receive_count: int = 0
+    from_client_id: str = ""
+    delayed_to: datetime | None = None
+    expired_at: datetime | None = None
+    re_route_from_queue: str = ""
     queue_msg: Any = field(default=None, repr=False)
 
     def __repr__(self) -> str:
