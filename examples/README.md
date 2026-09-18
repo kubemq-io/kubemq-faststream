@@ -12,7 +12,7 @@ Comprehensive examples covering all five KubeMQ messaging patterns (Events, Even
 
 ```bash
 # 1. Start a KubeMQ broker
-docker run -d --name kubemq -p 50000:50000 -p 9090:9090 kubemq/kubemq-community:latest
+docker run -d --name kubemq -p 50000:50000 -p 9090:9090 europe-docker.pkg.dev/kubemq/images/kubemq-next:latest
 
 # 2. Install the package
 pip install kubemq-faststream
